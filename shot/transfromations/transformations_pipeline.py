@@ -6,6 +6,7 @@ from shot.transfromations.color_space_converter import ColorSpaceConverter
 from shot.transfromations.image_splitter import ImageSplitter
 from shot.transfromations.pooling import Pooling
 from shot.transfromations.smooth_methods import SmoothMethods
+from shot.transfromations.hdr_filter import HDRFilter
 
 
 class TransformationPipeline:
@@ -26,6 +27,7 @@ class TransformationPipeline:
             'image_splitter': ImageSplitter, # 4 channels (n, h, w, c)
             'pooling': Pooling, # 4 channels (n, h, w, c)
             'histogram_calculator': HistogramCalculator, #3 channels (n, c, b)
+            'hdr_filter': HDRFilter, # 3 channels (h, w, c)
         }
 
     def _initialize_transformations(self, transformations):
