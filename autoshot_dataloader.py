@@ -5,6 +5,9 @@ import numpy as np
 from pathlib import Path
 from typing import List, Tuple, Dict, Optional, Union
 import cv2
+from collections import OrderedDict
+import threading
+import weakref
 from utils.video_reader import VideoReader, FrameData
 
 
@@ -24,7 +27,8 @@ class AutoshotDataset(Dataset):
         frame_size: Tuple[int, int] = (224, 224),
         min_shots: int = 1,
         random_offset_range: int = 5,
-        transform = None
+        transform = None,
+        cache_size: int = 10
     ):
         """
         Initialize the Autoshot dataset.
@@ -37,6 +41,7 @@ class AutoshotDataset(Dataset):
             min_shots: Minimum number of shots required for a video to be included
             random_offset_range: Range for random offset around transition center (data augmentation)
             transform: Optional transform to apply to frames
+            cache_size: Maximum number of video files to keep open simultaneously
         """
         self.json_path = Path(json_path)
         self.videos_dir = Path(videos_dir)
@@ -45,6 +50,14 @@ class AutoshotDataset(Dataset):
         self.min_shots = min_shots
         self.random_offset_range = random_offset_range
         self.transform = transform
+        self.cache_size = cache_size
+        
+        # Video reader cache (LRU cache)
+        self._video_cache = OrderedDict()
+        self._cache_lock = threading.Lock()
+        
+        # Register cleanup when object is deleted
+        weakref.finalize(self, self._cleanup_cache, self._video_cache)
         
         self.annotations = self._load_annotations()
         self.valid_videos = self._filter_valid_videos()
@@ -69,8 +82,8 @@ class AutoshotDataset(Dataset):
             if not video_path.exists():
                 continue
                 
-            # Check if we have frame boundaries (shots)
-            if not video_data['frame_boundaries']:
+            # Check if we have transitions (only annotated videos have transitions)
+            if not video_data.get('transitions', []):
                 continue
                 
             valid_videos.append(video_data)
@@ -78,30 +91,27 @@ class AutoshotDataset(Dataset):
         return valid_videos
     
     def _generate_sequences(self) -> List[Dict]:
-        """Generate sequences centered around shot boundaries."""
+        """Generate sequences centered around transitions."""
         sequences = []
         
         for video_data in self.valid_videos:
             total_frames = video_data['total_frames']
-            boundaries = video_data['frame_boundaries']
+            transitions = video_data['transitions']
             
-            # Process each boundary to create training sequences
-            for boundary in boundaries:
-                from_frame = boundary['from']
-                to_frame = boundary['to']
-                
-                # Calculate the center of the transition
-                transition_center = (from_frame + to_frame) // 2
+            # Process each transition to create training sequences
+            for transition in transitions:
+                transition_frame = transition['frame']
+                transition_type = transition['type']
                 
                 # Calculate base sequence start (center the sequence around transition)
                 half_length = self.sequence_length // 2
-                base_start = transition_center - half_length
+                base_start = transition_frame - half_length
                 
                 # Generate sequences with random offset for data augmentation
                 if self.random_offset_range > 0:
                     import random
                     # Create multiple sequences with different offsets
-                    for _ in range(3):  # Generate 3 variations per boundary
+                    for _ in range(3):  # Generate 3 variations per transition
                         offset = random.randint(-self.random_offset_range, self.random_offset_range)
                         start_frame = base_start + offset
                         
@@ -115,7 +125,7 @@ class AutoshotDataset(Dataset):
                                 'start_frame': start_frame,
                                 'end_frame': start_frame + self.sequence_length - 1,
                                 'frame_positions': list(range(start_frame, start_frame + self.sequence_length)),
-                                'boundary': boundary
+                                'transition': transition
                             }
                             sequences.append(sequence_info)
                 else:
@@ -129,37 +139,90 @@ class AutoshotDataset(Dataset):
                             'start_frame': start_frame,
                             'end_frame': start_frame + self.sequence_length - 1,
                             'frame_positions': list(range(start_frame, start_frame + self.sequence_length)),
-                            'boundary': boundary
+                            'transition': transition
                         }
                         sequences.append(sequence_info)
                 
         return sequences
     
+    def _get_cached_video_reader(self, video_path: Path) -> VideoReader:
+        """Get a cached video reader or create a new one."""
+        video_path_str = str(video_path)
+        
+        with self._cache_lock:
+            # Check if video is already in cache
+            if video_path_str in self._video_cache:
+                # Move to end (most recently used)
+                reader = self._video_cache.pop(video_path_str)
+                self._video_cache[video_path_str] = reader
+                return reader
+            
+            # Create new reader
+            reader = VideoReader(video_path)
+            reader.__enter__()  # Open the video file
+            
+            # Add to cache
+            self._video_cache[video_path_str] = reader
+            
+            # Evict oldest if cache is full
+            while len(self._video_cache) > self.cache_size:
+                oldest_path, oldest_reader = self._video_cache.popitem(last=False)
+                try:
+                    oldest_reader.__exit__(None, None, None)
+                except:
+                    pass  # Ignore cleanup errors
+            
+            return reader
+    
+    @staticmethod
+    def _cleanup_cache(cache: OrderedDict):
+        """Clean up video readers when dataset is destroyed."""
+        for reader in cache.values():
+            try:
+                reader.__exit__(None, None, None)
+            except:
+                pass  # Ignore cleanup errors
+        cache.clear()
+    
     def _get_scene_labels(self, sequence_info: Dict) -> List[int]:
         """
-        Generate scene labels for a sequence of frames based on the boundary.
+        Generate scene labels for a sequence of frames based on the transition.
         
         Label scheme:
-        - 0: Previous shot (frames <= from_frame)
-        - 1: Transition frames (from_frame < frame < to_frame) 
-        - 2: Next shot (frames >= to_frame)
+        - 0: Previous shot
+        - 1: Gradual transition frames (only for gradual transitions)
+        - 2: Next shot
+        
+        For instant cuts: only use labels 0 and 2.
+        For gradual transitions: use 0, 1, 2.
         """
         labels = []
-        boundary = sequence_info['boundary']
+        transition = sequence_info['transition']
         frame_positions = sequence_info['frame_positions']
         
-        from_frame = boundary['from']
-        to_frame = boundary['to']
+        transition_frame = transition['frame']
+        transition_type = transition['type']
         
         for frame_pos in frame_positions:
-            if frame_pos <= from_frame:
-                labels.append(0)  # Previous shot
-            elif frame_pos >= to_frame:
-                labels.append(2)  # Next shot
+            if transition_type == 'instant':
+                # Instant cut: only previous (0) and next (2) shots
+                if frame_pos < transition_frame:
+                    labels.append(0)  # Previous shot
+                elif frame_pos == transition_frame:
+                    labels.append(2)  # Transition frame becomes part of next shot
+                else:
+                    labels.append(2)  # Next shot
             else:
-                # Only label as transition if there are actual frames between from_frame and to_frame
-                # For instant cuts (from_frame + 1 == to_frame), there are no transition frames
-                labels.append(1)  # Transition frame (between from_frame and to_frame)
+                # Gradual transition
+                duration = transition.get('duration', 0)
+                transition_start = transition_frame - duration
+                
+                if frame_pos < transition_start:
+                    labels.append(0)  # Previous shot
+                elif frame_pos < transition_frame:
+                    labels.append(1)  # Gradual transition frames
+                else:
+                    labels.append(2)  # Next shot
                 
         return labels
     
@@ -197,16 +260,16 @@ class AutoshotDataset(Dataset):
         video_data = sequence_info['video_data']
         frame_positions = sequence_info['frame_positions']
         
-        # Load video and extract frames
+        # Get cached video reader
         video_path = self.videos_dir / video_data['filename']
+        reader = self._get_cached_video_reader(video_path)
         
         frames = []
-        with VideoReader(video_path) as reader:
-            frame_data_list = reader.get_frames(frame_positions)
-            
-            for frame_data in frame_data_list:
-                processed_frame = self._preprocess_frame(frame_data.frame)
-                frames.append(processed_frame)
+        frame_data_list = reader.get_frames(frame_positions)
+        
+        for frame_data in frame_data_list:
+            processed_frame = self._preprocess_frame(frame_data.frame)
+            frames.append(processed_frame)
         
         # Get scene labels
         labels = self._get_scene_labels(sequence_info)
@@ -221,7 +284,7 @@ class AutoshotDataset(Dataset):
         """Get information about the video for a given sequence index."""
         sequence_info = self.sequences[idx]
         video_data = sequence_info['video_data']
-        boundary = sequence_info['boundary']
+        transition = sequence_info['transition']
         
         return {
             'filename': video_data['filename'],
@@ -230,8 +293,9 @@ class AutoshotDataset(Dataset):
             'num_shots': video_data['num_shots'],
             'sequence_start': sequence_info['start_frame'],
             'sequence_end': sequence_info['end_frame'],
-            'boundary_from': boundary['from'],
-            'boundary_to': boundary['to']
+            'transition_frame': transition['frame'],
+            'transition_type': transition['type'],
+            'transition_duration': transition.get('duration', 0)
         }
 
 
@@ -245,7 +309,8 @@ def create_autoshot_dataloader(
     frame_size: Tuple[int, int] = (224, 224),
     min_shots: int = 1,
     random_offset_range: int = 5,
-    transform = None
+    transform = None,
+    cache_size: int = 10
 ) -> DataLoader:
     """
     Create a DataLoader for the Autoshot dataset.
@@ -261,6 +326,7 @@ def create_autoshot_dataloader(
         min_shots: Minimum number of shots required for a video to be included
         random_offset_range: Range for random offset around transition center (data augmentation)
         transform: Optional transform to apply to frames
+        cache_size: Maximum number of video files to keep open simultaneously per worker
         
     Returns:
         DataLoader for the Autoshot dataset
@@ -272,7 +338,8 @@ def create_autoshot_dataloader(
         frame_size=frame_size,
         min_shots=min_shots,
         random_offset_range=random_offset_range,
-        transform=transform
+        transform=transform,
+        cache_size=cache_size
     )
     
     return DataLoader(
@@ -296,7 +363,8 @@ def test_dataloader():
         shuffle=False,
         num_workers=0,                # Single process for debugging
         random_offset_range=3,        # Test data augmentation
-        min_shots=2
+        min_shots=2,
+        cache_size=5                  # Small cache for testing
     )
     
     print(f"Dataset size: {len(dataloader.dataset)}")
@@ -313,6 +381,9 @@ def test_dataloader():
         video_info = dataloader.dataset.get_video_info(i * dataloader.batch_size)
         print(f"  Video: {video_info['filename']}")
         print(f"  Sequence frames: {video_info['sequence_start']}-{video_info['sequence_end']}")
+        print(f"  Transition: frame {video_info['transition_frame']} ({video_info['transition_type']})")
+        if video_info['transition_duration'] > 0:
+            print(f"  Duration: {video_info['transition_duration']} frames")
         
         if i >= 2:  # Only test first few batches
             break

@@ -376,4 +376,143 @@ This project uses the AutoShot dataset for shot boundary detection training:
 
 ## License
 
-This project is part of the scene change detection research codebase. 
+This project is part of the scene change detection research codebase.
+
+# Google Drive File ID Extractor
+
+This repository contains scripts to extract all file IDs from a Google Drive folder.
+
+## Your Folder Information
+
+- **Folder URL**: https://drive.google.com/drive/folders/1xZN6tvefXXmpZlIZ6GoSUUxpDQQOSNfJ
+- **Folder ID**: `1xZN6tvefXXmpZlIZ6GoSUUxpDQQOSNfJ`
+
+## Method 1: Google Apps Script (Easiest)
+
+1. Go to [Google Apps Script](https://script.google.com/)
+2. Create a new project
+3. Copy the code from `get_drive_file_ids.js` into the script editor
+4. Run the function `getAllFileIdsFromFolder()` or `exportFileListToSheet()`
+5. Grant necessary permissions when prompted
+6. Check the logs for file IDs or view the created spreadsheet
+
+## Method 2: Python with Google Drive API
+
+### Prerequisites
+
+1. **Set up Google Cloud Project**:
+   - Go to [Google Cloud Console](https://console.cloud.google.com/)
+   - Create a new project or select existing one
+   - Enable the Google Drive API
+   - Create credentials (OAuth 2.0 Client ID for desktop application)
+   - Download the `credentials.json` file
+
+2. **Install Python dependencies**:
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+### Usage
+
+1. Place your `credentials.json` file in the same directory as the script
+2. Run the Python script:
+   ```bash
+   python get_drive_files.py
+   ```
+3. The first time you run it, you'll be prompted to authorize the application
+4. File IDs will be printed to console and exported to CSV/JSON files
+
+## Method 3: Manual Extraction
+
+### From Browser:
+1. Open each file in the folder
+2. Copy the file ID from the URL:
+   - For Google Docs: `https://docs.google.com/document/d/{FILE_ID}/edit`
+   - For Google Sheets: `https://docs.google.com/spreadsheets/d/{FILE_ID}/edit`
+   - For other files: `https://drive.google.com/file/d/{FILE_ID}/view`
+
+### Using Browser Console:
+1. Open your Google Drive folder in browser
+2. Press F12 to open developer tools
+3. Go to Console tab
+4. Paste this code:
+   ```javascript
+   // Get all file links on the current page
+   const fileLinks = document.querySelectorAll('[data-id]');
+   const fileIds = [];
+   
+   fileLinks.forEach(link => {
+       const id = link.getAttribute('data-id');
+       const name = link.getAttribute('aria-label') || link.textContent.trim();
+       if (id && name) {
+           fileIds.push({
+               name: name,
+               id: id,
+               url: `https://drive.google.com/file/d/${id}/view`
+           });
+       }
+   });
+   
+   console.table(fileIds);
+   ```
+
+## Output Formats
+
+The scripts can export file information in multiple formats:
+
+- **Console output**: Human-readable list with file names and IDs
+- **CSV file**: Spreadsheet format for easy analysis
+- **JSON file**: Structured data format for programming use
+- **Google Sheets**: Automated spreadsheet creation (Apps Script method)
+
+## File Information Included
+
+Each file entry includes:
+- File name
+- Unique file ID
+- File path (including subfolders)
+- MIME type
+- File size
+- Last modified date
+- Direct view link
+- Download link (when applicable)
+
+## Troubleshooting
+
+### Common Issues:
+
+1. **Permission Denied**: Make sure you have access to the folder
+2. **API Quota Exceeded**: Google Drive API has usage limits
+3. **Authentication Failed**: Check your credentials.json file
+4. **Folder Not Found**: Verify the folder ID is correct
+
+### For Python Script:
+- Make sure all dependencies are installed
+- Check that credentials.json is in the correct location
+- Ensure Google Drive API is enabled in Google Cloud Console
+
+### For Apps Script:
+- Grant all requested permissions
+- Check that the folder ID is correct in the script
+- View execution logs for detailed error messages
+
+## Folder Access Requirements
+
+To access the files, you need:
+- View access to the Google Drive folder
+- For API access: Appropriate OAuth scopes
+- For Apps Script: Script authorization
+
+## Security Notes
+
+- Keep your `credentials.json` file secure and never commit it to version control
+- The OAuth tokens have limited scope (read-only access to Drive)
+- File IDs are not sensitive but can be used to access files if shared publicly
+
+## Support
+
+If you encounter issues:
+1. Check that the folder is accessible to your account
+2. Verify all setup steps were completed
+3. Review the error messages for specific guidance
+4. Ensure you have the necessary permissions for the folder 
