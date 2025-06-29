@@ -185,6 +185,10 @@ downloader.organize_dataset()
 
 ## Quick Start
 
+### Unified dataset link:
+
+[Unified dataset](https://drive.google.com/file/d/1WF_AykYjO_ok-f8OCAxa3D1C7MZTMMxG/view?usp=sharing)
+
 ### Basic Usage
 
 ```python
@@ -378,104 +382,7 @@ This project uses the AutoShot dataset for shot boundary detection training:
 
 This project is part of the scene change detection research codebase.
 
-# Google Drive File ID Extractor
 
-This repository contains scripts to extract all file IDs from a Google Drive folder.
-
-## Your Folder Information
-
-- **Folder URL**: https://drive.google.com/drive/folders/1xZN6tvefXXmpZlIZ6GoSUUxpDQQOSNfJ
-- **Folder ID**: `1xZN6tvefXXmpZlIZ6GoSUUxpDQQOSNfJ`
-
-## Method 1: Google Apps Script (Easiest)
-
-1. Go to [Google Apps Script](https://script.google.com/)
-2. Create a new project
-3. Copy the code from `get_drive_file_ids.js` into the script editor
-4. Run the function `getAllFileIdsFromFolder()` or `exportFileListToSheet()`
-5. Grant necessary permissions when prompted
-6. Check the logs for file IDs or view the created spreadsheet
-
-## Method 2: Python with Google Drive API
-
-### Prerequisites
-
-1. **Set up Google Cloud Project**:
-   - Go to [Google Cloud Console](https://console.cloud.google.com/)
-   - Create a new project or select existing one
-   - Enable the Google Drive API
-   - Create credentials (OAuth 2.0 Client ID for desktop application)
-   - Download the `credentials.json` file
-
-2. **Install Python dependencies**:
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-### Usage
-
-1. Place your `credentials.json` file in the same directory as the script
-2. Run the Python script:
-   ```bash
-   python get_drive_files.py
-   ```
-3. The first time you run it, you'll be prompted to authorize the application
-4. File IDs will be printed to console and exported to CSV/JSON files
-
-## Method 3: Manual Extraction
-
-### From Browser:
-1. Open each file in the folder
-2. Copy the file ID from the URL:
-   - For Google Docs: `https://docs.google.com/document/d/{FILE_ID}/edit`
-   - For Google Sheets: `https://docs.google.com/spreadsheets/d/{FILE_ID}/edit`
-   - For other files: `https://drive.google.com/file/d/{FILE_ID}/view`
-
-### Using Browser Console:
-1. Open your Google Drive folder in browser
-2. Press F12 to open developer tools
-3. Go to Console tab
-4. Paste this code:
-   ```javascript
-   // Get all file links on the current page
-   const fileLinks = document.querySelectorAll('[data-id]');
-   const fileIds = [];
-   
-   fileLinks.forEach(link => {
-       const id = link.getAttribute('data-id');
-       const name = link.getAttribute('aria-label') || link.textContent.trim();
-       if (id && name) {
-           fileIds.push({
-               name: name,
-               id: id,
-               url: `https://drive.google.com/file/d/${id}/view`
-           });
-       }
-   });
-   
-   console.table(fileIds);
-   ```
-
-## Output Formats
-
-The scripts can export file information in multiple formats:
-
-- **Console output**: Human-readable list with file names and IDs
-- **CSV file**: Spreadsheet format for easy analysis
-- **JSON file**: Structured data format for programming use
-- **Google Sheets**: Automated spreadsheet creation (Apps Script method)
-
-## File Information Included
-
-Each file entry includes:
-- File name
-- Unique file ID
-- File path (including subfolders)
-- MIME type
-- File size
-- Last modified date
-- Direct view link
-- Download link (when applicable)
 
 ## Troubleshooting
 
